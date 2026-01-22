@@ -111,6 +111,20 @@ void LIVMapper::readParameters(rclcpp::Node::SharedPtr &node)
   this->node->declare_parameter<bool>("publish.pub_effect_point_en", false);
   this->node->declare_parameter<bool>("publish.dense_map_en", false);
 
+  // Camera parameters
+  this->node->declare_parameter<std::string>("model", "Pinhole");
+  this->node->declare_parameter<int>("width", 640);
+  this->node->declare_parameter<int>("height", 480);
+  this->node->declare_parameter<double>("scale", 1.0);
+  this->node->declare_parameter<double>("fx", 500.0);
+  this->node->declare_parameter<double>("fy", 500.0);
+  this->node->declare_parameter<double>("cx", 320.0);
+  this->node->declare_parameter<double>("cy", 240.0);
+  this->node->declare_parameter<double>("d0", 0.0);
+  this->node->declare_parameter<double>("d1", 0.0);
+  this->node->declare_parameter<double>("d2", 0.0);
+  this->node->declare_parameter<double>("d3", 0.0);
+
   // get parameter
   this->node->get_parameter("common.lid_topic", lid_topic);
   this->node->get_parameter("common.imu_topic", imu_topic);
@@ -186,7 +200,7 @@ void LIVMapper::initializeComponents(rclcpp::Node::SharedPtr &node)
   voxelmap_manager->extT_ << VEC_FROM_ARRAY(extrinT);
   voxelmap_manager->extR_ << MAT_FROM_ARRAY(extrinR);
 
-  if (!vk::camera_loader::loadFromRosNs(this->node, "parameter_blackboard", vio_manager->cam)) throw std::runtime_error("Camera model not correctly specified.");
+  if (!vk::camera_loader::loadFromRosNs(this->node, "", vio_manager->cam)) throw std::runtime_error("Camera model not correctly specified.");
 
   vio_manager->grid_size = grid_size;
   vio_manager->patch_size = patch_size;

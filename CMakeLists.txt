@@ -94,8 +94,10 @@ find_package(image_transport REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED)
 find_package(OpenCV REQUIRED)
-find_package(Sophus REQUIRED)
+# Sophus is header-only, directly add ROS2 include path
+set(Sophus_INCLUDE_DIRS "/opt/ros/humble/include")
 find_package(Boost REQUIRED COMPONENTS thread)
+find_package(fmt REQUIRED)
 
 # Include directories for dependencies
 include_directories(
@@ -173,6 +175,7 @@ target_link_libraries(fastlivo_mapping
   ${OpenCV_LIBRARIES}
   ${Sophus_LIBRARIES}
   ${Boost_LIBRARIES}
+  fmt::fmt
 )
 
 # Link mimalloc if found
