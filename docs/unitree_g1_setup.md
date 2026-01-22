@@ -12,16 +12,21 @@
 sudo apt-get install -y ros-humble-sophus libfmt-dev
 ```
 
-## Build
+## Source code
 
-Using the build script (recommended):
+
 ```bash
-cd /home/yuzedu/fast_ws/src/livox_ros_driver2
-./build.sh humble
-source /home/yuzedu/fast_ws/install/setup.bash
+git clone https://github.com/yuzedu/FAST-LIVO2.git
+git clone https://github.com/yuzedu/rpg_vikit.git
+git clone https://github.com/yuzedu/livox_ros_driver2.git
 ```
 
-Or manually:
+```bash
+cd ~/fast_wa/src/livox_ros_driver.git
+cp package_ROS2.xml package.xml
+```
+
+## Build
 ```bash
 cd /home/yuzedu/fast_ws
 source /opt/ros/humble/setup.bash
