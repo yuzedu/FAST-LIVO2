@@ -21,7 +21,9 @@ which is included as part of this source code package.
 #include <tf2_ros/transform_broadcaster.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <nav_msgs/msg/path.hpp>
+#include <nav_msgs/msg/occupancy_grid.hpp>
 #include <vikit/camera_loader.h>
+#include <unordered_set>
 
 class LIVMapper
 {
@@ -186,5 +188,36 @@ public:
   double aver_time_icp = 0;
   double aver_time_map_inre = 0;
   bool colmap_output_en = false;
+
+  // Occupancy grid mapping (2D and 3D)
+  bool occupancy_grid_enable_ = false;
+  double occupancy_grid_resolution_ = 0.1;
+  double occupancy_grid_lx_ = -50.0, occupancy_grid_ly_ = -50.0;
+  double occupancy_grid_rx_ = 50.0, occupancy_grid_ry_ = 50.0;
+  double occupancy_grid_lz_ = -2.0, occupancy_grid_rz_ = 5.0;
+  double occupancy_grid_height_min_ = -0.5, occupancy_grid_height_max_ = 2.0;
+  double occupancy_robot_radius_ = 0.2;      // Exclude points within this radius of robot
+  double occupancy_update_interval_ = 0.5;   // Seconds between map updates
+  double occupancy_decay_time_ = 30.0;       // Seconds before voxels are removed
+
+  // 2D occupancy grid
+  rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr occupancy_grid_pub_;
+  rclcpp::TimerBase::SharedPtr occupancy_grid_timer_;
+  std::vector<int8_t> occupancy_grid_data_;
+  int occupancy_grid_width_ = 0, occupancy_grid_height_ = 0;
+
+  // 3D occupancy grid (stored as set of occupied voxel indices with timestamps)
+  std::unordered_set<int64_t> occupancy_3d_voxels_;
+  std::unordered_map<int64_t, double> occupancy_3d_timestamps_;  // Voxel index -> last seen time
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr occupancy_3d_pub_;
+  int occupancy_3d_nx_ = 0, occupancy_3d_ny_ = 0, occupancy_3d_nz_ = 0;
+  double occupancy_last_update_time_ = 0.0;  // For update frequency control
+
+  void initializeOccupancyGrid();
+  void updateOccupancyGrid();
+  void publishOccupancyGrid();
+  void publish3DOccupancy();
+  void decayOccupancyGrid();
+  int64_t voxelToIndex3D(int x, int y, int z);
 };
 #endif

@@ -125,6 +125,21 @@ void LIVMapper::readParameters(rclcpp::Node::SharedPtr &node)
   this->node->declare_parameter<double>("d2", 0.0);
   this->node->declare_parameter<double>("d3", 0.0);
 
+  // Occupancy grid parameters (2D and 3D)
+  this->node->declare_parameter<bool>("occupancy_grid.enable", false);
+  this->node->declare_parameter<double>("occupancy_grid.resolution", 0.1);
+  this->node->declare_parameter<double>("occupancy_grid.lx", -50.0);
+  this->node->declare_parameter<double>("occupancy_grid.ly", -50.0);
+  this->node->declare_parameter<double>("occupancy_grid.lz", -2.0);
+  this->node->declare_parameter<double>("occupancy_grid.rx", 50.0);
+  this->node->declare_parameter<double>("occupancy_grid.ry", 50.0);
+  this->node->declare_parameter<double>("occupancy_grid.rz", 5.0);
+  this->node->declare_parameter<double>("occupancy_grid.height_min", -0.5);
+  this->node->declare_parameter<double>("occupancy_grid.height_max", 2.0);
+  this->node->declare_parameter<double>("occupancy_grid.robot_radius", 0.2);
+  this->node->declare_parameter<double>("occupancy_grid.update_interval", 0.5);
+  this->node->declare_parameter<double>("occupancy_grid.decay_time", 30.0);
+
   // get parameter
   this->node->get_parameter("common.lid_topic", lid_topic);
   this->node->get_parameter("common.imu_topic", imu_topic);
@@ -183,6 +198,21 @@ void LIVMapper::readParameters(rclcpp::Node::SharedPtr &node)
   this->node->get_parameter("publish.pub_scan_num", pub_scan_num);
   this->node->get_parameter("publish.pub_effect_point_en", pub_effect_point_en);
   this->node->get_parameter("publish.dense_map_en", dense_map_en);
+
+  // Occupancy grid parameters (2D and 3D)
+  this->node->get_parameter("occupancy_grid.enable", occupancy_grid_enable_);
+  this->node->get_parameter("occupancy_grid.resolution", occupancy_grid_resolution_);
+  this->node->get_parameter("occupancy_grid.lx", occupancy_grid_lx_);
+  this->node->get_parameter("occupancy_grid.ly", occupancy_grid_ly_);
+  this->node->get_parameter("occupancy_grid.lz", occupancy_grid_lz_);
+  this->node->get_parameter("occupancy_grid.rx", occupancy_grid_rx_);
+  this->node->get_parameter("occupancy_grid.ry", occupancy_grid_ry_);
+  this->node->get_parameter("occupancy_grid.rz", occupancy_grid_rz_);
+  this->node->get_parameter("occupancy_grid.height_min", occupancy_grid_height_min_);
+  this->node->get_parameter("occupancy_grid.height_max", occupancy_grid_height_max_);
+  this->node->get_parameter("occupancy_grid.robot_radius", occupancy_robot_radius_);
+  this->node->get_parameter("occupancy_grid.update_interval", occupancy_update_interval_);
+  this->node->get_parameter("occupancy_grid.decay_time", occupancy_decay_time_);
 }
 
 void LIVMapper::initializeComponents(rclcpp::Node::SharedPtr &node) 
@@ -291,6 +321,13 @@ void LIVMapper::initializeSubscribersAndPublishers(rclcpp::Node::SharedPtr &node
   pubImuPropOdom = this->node->create_publisher<nav_msgs::msg::Odometry>("/LIVO2/imu_propagate", 10000);
   imu_prop_timer = this->node->create_wall_timer(0.004s, std::bind(&LIVMapper::imu_prop_callback, this));
   voxelmap_manager->voxel_map_pub_= this->node->create_publisher<visualization_msgs::msg::MarkerArray>("/planes", 10000);
+
+  // Occupancy grid publishers (2D and 3D)
+  if (occupancy_grid_enable_) {
+    occupancy_grid_pub_ = this->node->create_publisher<nav_msgs::msg::OccupancyGrid>("/occupancy_grid", 10);
+    occupancy_3d_pub_ = this->node->create_publisher<visualization_msgs::msg::MarkerArray>("/occupancy_3d", 10);
+    initializeOccupancyGrid();
+  }
 }
 
 void LIVMapper::handleFirstFrame() 
@@ -1387,4 +1424,206 @@ void LIVMapper::publish_path(const rclcpp::Publisher<nav_msgs::msg::Path>::Share
   msg_body_pose.header.frame_id = "camera_init";
   path.poses.push_back(msg_body_pose);
   pubPath->publish(path);
+}
+
+void LIVMapper::initializeOccupancyGrid()
+{
+  if (!occupancy_grid_enable_) return;
+
+  // 2D grid dimensions
+  occupancy_grid_width_ = static_cast<int>((occupancy_grid_rx_ - occupancy_grid_lx_) / occupancy_grid_resolution_);
+  occupancy_grid_height_ = static_cast<int>((occupancy_grid_ry_ - occupancy_grid_ly_) / occupancy_grid_resolution_);
+  occupancy_grid_data_.resize(occupancy_grid_width_ * occupancy_grid_height_, -1);
+
+  // 3D grid dimensions
+  occupancy_3d_nx_ = occupancy_grid_width_;
+  occupancy_3d_ny_ = occupancy_grid_height_;
+  occupancy_3d_nz_ = static_cast<int>((occupancy_grid_rz_ - occupancy_grid_lz_) / occupancy_grid_resolution_);
+
+  // Setup occupancy grid update timer (every 200ms)
+  occupancy_grid_timer_ = this->node->create_wall_timer(
+    std::chrono::milliseconds(200),
+    std::bind(&LIVMapper::updateOccupancyGrid, this));
+
+  RCLCPP_INFO(this->node->get_logger(), "Occupancy Grid initialized: 2D=%dx%d, 3D=%dx%dx%d, resolution %.2f",
+    occupancy_grid_width_, occupancy_grid_height_,
+    occupancy_3d_nx_, occupancy_3d_ny_, occupancy_3d_nz_, occupancy_grid_resolution_);
+}
+
+int64_t LIVMapper::voxelToIndex3D(int x, int y, int z)
+{
+  return static_cast<int64_t>(z) * occupancy_3d_nx_ * occupancy_3d_ny_ +
+         static_cast<int64_t>(y) * occupancy_3d_nx_ + x;
+}
+
+void LIVMapper::updateOccupancyGrid()
+{
+  if (!occupancy_grid_enable_ || !pcl_w_wait_pub || pcl_w_wait_pub->empty()) return;
+
+  double current_time = this->node->now().seconds();
+
+  // Check update interval - skip if too soon
+  if (current_time - occupancy_last_update_time_ < occupancy_update_interval_) {
+    return;
+  }
+  occupancy_last_update_time_ = current_time;
+
+  // Get robot position for exclusion radius
+  double robot_x = _state.pos_end(0);
+  double robot_y = _state.pos_end(1);
+  double robot_z = _state.pos_end(2);
+  double radius_sq = occupancy_robot_radius_ * occupancy_robot_radius_;
+
+  // Accumulate: add new occupied cells
+  for (const auto& pt : pcl_w_wait_pub->points) {
+    if (std::isnan(pt.x) || std::isnan(pt.y) || std::isnan(pt.z)) continue;
+
+    // Exclude points within robot radius
+    double dx = pt.x - robot_x;
+    double dy = pt.y - robot_y;
+    double dz = pt.z - robot_z;
+    if (dx*dx + dy*dy + dz*dz < radius_sq) continue;
+
+    // Convert to grid coordinates
+    int gx = static_cast<int>((pt.x - occupancy_grid_lx_) / occupancy_grid_resolution_);
+    int gy = static_cast<int>((pt.y - occupancy_grid_ly_) / occupancy_grid_resolution_);
+    int gz = static_cast<int>((pt.z - occupancy_grid_lz_) / occupancy_grid_resolution_);
+
+    // Check 3D bounds and add to 3D occupancy with timestamp
+    if (gx >= 0 && gx < occupancy_3d_nx_ &&
+        gy >= 0 && gy < occupancy_3d_ny_ &&
+        gz >= 0 && gz < occupancy_3d_nz_) {
+      int64_t idx = voxelToIndex3D(gx, gy, gz);
+      occupancy_3d_voxels_.insert(idx);
+      occupancy_3d_timestamps_[idx] = current_time;
+    }
+
+    // 2D: Filter by height for 2D grid
+    if (pt.z < occupancy_grid_height_min_ || pt.z > occupancy_grid_height_max_) continue;
+
+    // Check 2D bounds
+    if (gx < 0 || gx >= occupancy_grid_width_ || gy < 0 || gy >= occupancy_grid_height_) continue;
+
+    // Mark as occupied in 2D (accumulate)
+    occupancy_grid_data_[gy * occupancy_grid_width_ + gx] = 100;
+  }
+
+  // Decay old voxels
+  decayOccupancyGrid();
+
+  // Publish both
+  publishOccupancyGrid();
+  publish3DOccupancy();
+}
+
+void LIVMapper::decayOccupancyGrid()
+{
+  if (occupancy_decay_time_ <= 0) return;  // No decay if set to 0 or negative
+
+  double current_time = this->node->now().seconds();
+  double decay_threshold = current_time - occupancy_decay_time_;
+
+  // Remove old 3D voxels
+  std::vector<int64_t> to_remove;
+  for (const auto& [idx, timestamp] : occupancy_3d_timestamps_) {
+    if (timestamp < decay_threshold) {
+      to_remove.push_back(idx);
+    }
+  }
+  for (int64_t idx : to_remove) {
+    occupancy_3d_voxels_.erase(idx);
+    occupancy_3d_timestamps_.erase(idx);
+  }
+
+  // For 2D grid, we could also track timestamps per cell, but for simplicity
+  // we just clear cells that correspond to removed 3D voxels in the height range
+  // This is a simplified approach - a more complete solution would track 2D timestamps separately
+}
+
+void LIVMapper::publishOccupancyGrid()
+{
+  if (!occupancy_grid_enable_) return;
+
+  nav_msgs::msg::OccupancyGrid grid;
+  grid.header.stamp = this->node->now();
+  grid.header.frame_id = "camera_init";
+
+  grid.info.resolution = occupancy_grid_resolution_;
+  grid.info.width = occupancy_grid_width_;
+  grid.info.height = occupancy_grid_height_;
+  grid.info.origin.position.x = occupancy_grid_lx_;
+  grid.info.origin.position.y = occupancy_grid_ly_;
+  grid.info.origin.position.z = 0.0;
+  grid.info.origin.orientation.w = 1.0;
+
+  grid.data = occupancy_grid_data_;
+
+  occupancy_grid_pub_->publish(grid);
+}
+
+void LIVMapper::publish3DOccupancy()
+{
+  if (!occupancy_grid_enable_ || occupancy_3d_voxels_.empty()) return;
+
+  visualization_msgs::msg::MarkerArray marker_array;
+
+  // Use CUBE_LIST for efficient rendering - single marker with all voxels
+  visualization_msgs::msg::Marker cube_list;
+  cube_list.header.stamp = this->node->now();
+  cube_list.header.frame_id = "camera_init";
+  cube_list.ns = "occupancy_voxels";
+  cube_list.id = 0;
+  cube_list.type = visualization_msgs::msg::Marker::CUBE_LIST;
+  cube_list.action = visualization_msgs::msg::Marker::ADD;
+
+  // Cube size = voxel resolution
+  cube_list.scale.x = occupancy_grid_resolution_;
+  cube_list.scale.y = occupancy_grid_resolution_;
+  cube_list.scale.z = occupancy_grid_resolution_;
+
+  cube_list.pose.orientation.w = 1.0;
+  cube_list.lifetime = rclcpp::Duration(0, 0);  // Persistent
+
+  cube_list.points.reserve(occupancy_3d_voxels_.size());
+  cube_list.colors.reserve(occupancy_3d_voxels_.size());
+
+  for (const auto& idx : occupancy_3d_voxels_) {
+    int x = idx % occupancy_3d_nx_;
+    int y = (idx / occupancy_3d_nx_) % occupancy_3d_ny_;
+    int z = idx / (occupancy_3d_nx_ * occupancy_3d_ny_);
+
+    geometry_msgs::msg::Point pt;
+    pt.x = occupancy_grid_lx_ + (x + 0.5) * occupancy_grid_resolution_;
+    pt.y = occupancy_grid_ly_ + (y + 0.5) * occupancy_grid_resolution_;
+    pt.z = occupancy_grid_lz_ + (z + 0.5) * occupancy_grid_resolution_;
+    cube_list.points.push_back(pt);
+
+    // Rainbow color based on height (FIESTA style)
+    double h = static_cast<double>(z) / occupancy_3d_nz_;
+    std_msgs::msg::ColorRGBA color;
+    color.a = 0.8;
+
+    // HSV to RGB rainbow colormap
+    h = h - floor(h);
+    h *= 6.0;
+    int i = static_cast<int>(floor(h));
+    double f = h - i;
+    if (!(i & 1)) f = 1 - f;
+    double n = 1.0 - f;
+
+    switch (i) {
+      case 6:
+      case 0: color.r = 1.0; color.g = n; color.b = 0.0; break;
+      case 1: color.r = n; color.g = 1.0; color.b = 0.0; break;
+      case 2: color.r = 0.0; color.g = 1.0; color.b = n; break;
+      case 3: color.r = 0.0; color.g = n; color.b = 1.0; break;
+      case 4: color.r = n; color.g = 0.0; color.b = 1.0; break;
+      case 5: color.r = 1.0; color.g = 0.0; color.b = n; break;
+      default: color.r = 1.0; color.g = 0.5; color.b = 0.5; break;
+    }
+    cube_list.colors.push_back(color);
+  }
+
+  marker_array.markers.push_back(cube_list);
+  occupancy_3d_pub_->publish(marker_array);
 }

@@ -4,7 +4,7 @@
       img_topic: "/camera/camera/color/image_raw"
       lid_topic: "/livox/lidar"
       imu_topic: "/livox/imu"
-      img_en: 0
+      img_en: 1
       lidar_en: 1
       ros_driver_bug_fix: false
 
@@ -25,7 +25,8 @@
 
     time_offset:
       imu_time_offset: 0.0
-      img_time_offset: -0.006
+      #img_time_offset: -0.006 #on board
+      img_time_offset: 1751433568.0 #on rosbag
       exposure_time_init: 0.0
 
     preprocess:
@@ -75,9 +76,9 @@
       gravity_align_en: true
 
     publish:
-      dense_map_en: true
+      dense_map_en: false
       pub_effect_point_en: false
-      pub_plane_en: false
+      pub_plane_en: true
       pub_scan_num: 1
       blind_rgb_points: 0.0
 
@@ -90,3 +91,18 @@
       colmap_output_en: false
       filter_size_pcd: 0.15
       interval: -1
+
+    occupancy_grid:
+      enable: true
+      resolution: 0.1
+      lx: -50.0
+      ly: -50.0
+      lz: -2.0
+      rx: 50.0
+      ry: 50.0
+      rz: 5.0
+      height_min: -0.5   # for 2D projection filter
+      height_max: 2.0    # for 2D projection filter
+      robot_radius: 0.3  # exclude points within this radius of robot (meters)
+      update_interval: 0.5  # seconds between map updates
+      decay_time: 60.0   # seconds before old voxels are removed (0 = no decay)
