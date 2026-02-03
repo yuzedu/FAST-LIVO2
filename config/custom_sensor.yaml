@@ -1,5 +1,19 @@
 /**:
   ros__parameters:
+    model: Pinhole
+    width: 640 # on rosbag
+    #width: 1280 on robot
+    height: 480 # on rosbag
+    #height: 720 on robot
+    scale: 1.0
+    fx: 643.6208652685277
+    fy: 606.338210828594
+    cx: 639.379735810656
+    cy: 365.5472566365266
+    d0: -0.05596842989325523
+    d1: 0.06889437139034271
+    d2: -0.0001148505107266828
+    d3: 0.0007815142744220793
     common:
       img_topic: "/camera/camera/color/image_raw"
       lid_topic: "/livox/lidar"
