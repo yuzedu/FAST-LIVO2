@@ -707,16 +707,16 @@ void VoxelMapManager::BuildResidualListOMP(std::vector<pointWithVar> &pv_list, s
       }
       if (is_sucess)
       {
-        mylock.lock();
+        // mylock.lock();
         useful_ptpl[i] = true;
         all_ptpl_list[i] = single_ptpl;
-        mylock.unlock();
+        //mylock.unlock();
       }
       else
       {
-        mylock.lock();
+        // mylock.lock();
         useful_ptpl[i] = false;
-        mylock.unlock();
+        // mylock.unlock();
       }
     }
   }

@@ -325,7 +325,7 @@ void LIVMapper::initializeSubscribersAndPublishers(rclcpp::Node::SharedPtr &node
   // Occupancy grid publishers (2D and 3D)
   if (occupancy_grid_enable_) {
     occupancy_grid_pub_ = this->node->create_publisher<nav_msgs::msg::OccupancyGrid>("/occupancy_grid", 10);
-    occupancy_3d_pub_ = this->node->create_publisher<visualization_msgs::msg::MarkerArray>("/occupancy_3d", 10);
+    occupancy_3d_pub_ = this->node->create_publisher<sensor_msgs::msg::PointCloud2>("/occupancy_3d", 10);
     initializeOccupancyGrid();
   }
 }
@@ -1458,7 +1458,8 @@ int64_t LIVMapper::voxelToIndex3D(int x, int y, int z)
 
 void LIVMapper::updateOccupancyGrid()
 {
-  if (!occupancy_grid_enable_ || !pcl_w_wait_pub || pcl_w_wait_pub->empty()) return;
+  // Use feats_down_world instead of pcl_w_wait_pub - it's always available after LIO
+  if (!occupancy_grid_enable_ || !feats_down_world || feats_down_world->empty()) return;
 
   double current_time = this->node->now().seconds();
 
@@ -1475,7 +1476,7 @@ void LIVMapper::updateOccupancyGrid()
   double radius_sq = occupancy_robot_radius_ * occupancy_robot_radius_;
 
   // Accumulate: add new occupied cells
-  for (const auto& pt : pcl_w_wait_pub->points) {
+  for (const auto& pt : feats_down_world->points) {
     if (std::isnan(pt.x) || std::isnan(pt.y) || std::isnan(pt.z)) continue;
 
     // Exclude points within robot radius
@@ -1565,65 +1566,25 @@ void LIVMapper::publish3DOccupancy()
 {
   if (!occupancy_grid_enable_ || occupancy_3d_voxels_.empty()) return;
 
-  visualization_msgs::msg::MarkerArray marker_array;
-
-  // Use CUBE_LIST for efficient rendering - single marker with all voxels
-  visualization_msgs::msg::Marker cube_list;
-  cube_list.header.stamp = this->node->now();
-  cube_list.header.frame_id = "camera_init";
-  cube_list.ns = "occupancy_voxels";
-  cube_list.id = 0;
-  cube_list.type = visualization_msgs::msg::Marker::CUBE_LIST;
-  cube_list.action = visualization_msgs::msg::Marker::ADD;
-
-  // Cube size = voxel resolution
-  cube_list.scale.x = occupancy_grid_resolution_;
-  cube_list.scale.y = occupancy_grid_resolution_;
-  cube_list.scale.z = occupancy_grid_resolution_;
-
-  cube_list.pose.orientation.w = 1.0;
-  cube_list.lifetime = rclcpp::Duration(0, 0);  // Persistent
-
-  cube_list.points.reserve(occupancy_3d_voxels_.size());
-  cube_list.colors.reserve(occupancy_3d_voxels_.size());
+  pcl::PointCloud<pcl::PointXYZ> cloud;
+  cloud.reserve(occupancy_3d_voxels_.size());
 
   for (const auto& idx : occupancy_3d_voxels_) {
     int x = idx % occupancy_3d_nx_;
     int y = (idx / occupancy_3d_nx_) % occupancy_3d_ny_;
     int z = idx / (occupancy_3d_nx_ * occupancy_3d_ny_);
 
-    geometry_msgs::msg::Point pt;
+    pcl::PointXYZ pt;
     pt.x = occupancy_grid_lx_ + (x + 0.5) * occupancy_grid_resolution_;
     pt.y = occupancy_grid_ly_ + (y + 0.5) * occupancy_grid_resolution_;
     pt.z = occupancy_grid_lz_ + (z + 0.5) * occupancy_grid_resolution_;
-    cube_list.points.push_back(pt);
-
-    // Rainbow color based on height (FIESTA style)
-    double h = static_cast<double>(z) / occupancy_3d_nz_;
-    std_msgs::msg::ColorRGBA color;
-    color.a = 0.8;
-
-    // HSV to RGB rainbow colormap
-    h = h - floor(h);
-    h *= 6.0;
-    int i = static_cast<int>(floor(h));
-    double f = h - i;
-    if (!(i & 1)) f = 1 - f;
-    double n = 1.0 - f;
-
-    switch (i) {
-      case 6:
-      case 0: color.r = 1.0; color.g = n; color.b = 0.0; break;
-      case 1: color.r = n; color.g = 1.0; color.b = 0.0; break;
-      case 2: color.r = 0.0; color.g = 1.0; color.b = n; break;
-      case 3: color.r = 0.0; color.g = n; color.b = 1.0; break;
-      case 4: color.r = n; color.g = 0.0; color.b = 1.0; break;
-      case 5: color.r = 1.0; color.g = 0.0; color.b = n; break;
-      default: color.r = 1.0; color.g = 0.5; color.b = 0.5; break;
-    }
-    cube_list.colors.push_back(color);
+    cloud.push_back(pt);
   }
 
-  marker_array.markers.push_back(cube_list);
-  occupancy_3d_pub_->publish(marker_array);
+  sensor_msgs::msg::PointCloud2 msg;
+  pcl::toROSMsg(cloud, msg);
+  msg.header.stamp = this->node->now();
+  msg.header.frame_id = "camera_init";
+
+  occupancy_3d_pub_->publish(msg);
 }

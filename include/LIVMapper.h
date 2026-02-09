@@ -209,7 +209,7 @@ public:
   // 3D occupancy grid (stored as set of occupied voxel indices with timestamps)
   std::unordered_set<int64_t> occupancy_3d_voxels_;
   std::unordered_map<int64_t, double> occupancy_3d_timestamps_;  // Voxel index -> last seen time
-  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr occupancy_3d_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr occupancy_3d_pub_;
   int occupancy_3d_nx_ = 0, occupancy_3d_ny_ = 0, occupancy_3d_nz_ = 0;
   double occupancy_last_update_time_ = 0.0;  // For update frequency control
 
